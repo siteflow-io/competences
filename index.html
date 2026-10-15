@@ -22,14 +22,18 @@ body{margin:0;min-height:100vh;font:15px/1.5 "Segoe UI",system-ui,Arial,sans-ser
 <body>
 <div class="cadre" id="cadre"><div class="rond"></div><p class="attente">Chargement…</p></div>
 <script>
-// Page d'entrée du lien de saisie. Elle demande l'écran voulu (?p=saisie…) au script du tableau, exactement le fichier que
-// l'ancien lien affichait, avec ses données de départ, puis l'affiche à sa place. Les demandes partent en texte simple et
-// sans aucun cookie ni compte Google : Google les traite comme un visiteur sans compte, et le script s'exécute en tant que
-// propriétaire du tableau. C'est ce qui permet au lien de s'ouvrir quel que soit le compte Google ouvert dans le navigateur.
+// Page d'entrée du lien de saisie. Elle affiche l'écran voulu (?p=saisie…) : exactement le fichier que l'ancien lien
+// affichait, avec ses données de départ, demandés au script du tableau. Les demandes partent en texte simple et sans aucun
+// cookie ni compte Google : Google les traite comme un visiteur sans compte, et le script s'exécute en tant que propriétaire
+// du tableau. C'est ce qui permet au lien de s'ouvrir quel que soit le compte Google ouvert dans le navigateur.
+// Vitesse : chaque écran est gardé dans la mémoire du navigateur et s'affiche aussitôt à la visite suivante (puis il est
+// vérifié auprès de Google, sans rien bloquer) ; depuis l'accueil, la saisie est demandée d'avance, et les autres écrans
+// dès que la souris passe sur leur tuile. Les valeurs des élèves, elles, sont toujours lues dans le tableau au moment voulu.
 (function(){
   var LIEN_SCRIPT='https://script.google.com/macros/s/AKfycbwZmEVwnVjd1URCvz-2GZFlGnCOpGazM5sKmTQY589KPgruTLg7ZXgu4iM4WlpgMYsbtw/exec';
-  var ATTENTE_PAGE=30000;     // l'écran : 30 s au plus, sinon on le dit
+  var ATTENTE_PAGE=30000;     // un écran : 30 s au plus, sinon on le dit
   var ATTENTE_APPEL=420000;   // un appel : Google arrête lui-même un script au bout de 6 minutes
+  var FRAIS=120000;           // un écran gardé depuis moins de 2 minutes s'affiche sans être redemandé
   var BASE=location.origin+location.pathname;
   var p='accueil';try{p=new URLSearchParams(location.search).get('p')||'accueil';}catch(e){}
 
@@ -41,9 +45,11 @@ body{margin:0;min-height:100vh;font:15px/1.5 "Segoe UI",system-ui,Arial,sans-ser
     try{history.replaceState(null,'',location.pathname+location.search);}catch(e){}
   }
 
-  // Remplace google.script.run, google.script.host et google.script.url dans l'écran affiché : même façon d'écrire,
-  // mêmes réponses, mêmes erreurs (leur texte est celui que donne le script). Cette fonction est recopiée dans l'écran.
-  function poserGoogle(LIEN,ATTENTE){
+  // Posé dans cette page et recopié dans chaque écran affiché :
+  //  - google.script.run, google.script.host, google.script.url : même façon d'écrire, mêmes réponses, mêmes erreurs ;
+  //  - la mémoire des écrans, dans le « Cache » du navigateur (à part du localStorage, que ce site partage avec d'autres pages) ;
+  //  - le préchargement d'un écran ; l'envoi qui part encore quand la page se ferme.
+  function poserGoogle(LIEN,ATTENTE,BASE,FRAIS){
     function appeler(corps,delai){return new Promise(function(ok,ko){
       var fini=false,ctrl=window.AbortController?new AbortController():null;
       var minuterie=setTimeout(function(){if(fini)return;fini=true;if(ctrl)ctrl.abort();ko(new Error('timed out : Google ne répond pas.'));},delai);
@@ -69,6 +75,31 @@ body{margin:0;min-height:100vh;font:15px/1.5 "Segoe UI",system-ui,Arial,sans-ser
       host:{close:function(){},setHeight:function(){},setWidth:function(){},editor:{focus:function(){}},origin:location.origin},
       url:{getLocation:function(cb){cb(lieu());}},
       history:{push:function(){},replace:function(){},setChangeHandler:function(){}}}};
+    // La mémoire des écrans
+    var NOM='ct-ecrans-v1';function cle(x){return BASE+'__ecran__/'+encodeURIComponent(x);}
+    window.__ctLireEcran=function(x){try{if(!window.caches)return Promise.resolve(null);
+      return caches.open(NOM).then(function(c){return c.match(cle(x));}).then(function(r){return r?r.json():null;}).catch(function(){return null;});}catch(e){return Promise.resolve(null);}};
+    window.__ctGarderEcran=function(x,d){try{if(!window.caches)return Promise.resolve();
+      return caches.open(NOM).then(function(c){return c.put(cle(x),new Response(JSON.stringify({t:Date.now(),html:d.html,depart:d.depart}),{headers:{'Content-Type':'application/json'}}));}).catch(function(){});}catch(e){return Promise.resolve();}};
+    // Demander un écran d'avance (une seule fois à la fois ; rien si celui qu'on a date de moins de 2 minutes)
+    var enVol=window.__ctEnVol=window.__ctEnVol||{};   // partagé entre cette page et l'écran écrit à sa place : jamais deux demandes du même écran
+    window.__ctPrecharger=function(x){if(enVol[x])return enVol[x];
+      enVol[x]=window.__ctLireEcran(x).then(function(m){if(m&&Date.now()-m.t<FRAIS)return m;
+        return appeler({f:'page',p:x},30000).then(function(d){return window.__ctGarderEcran(x,d).then(function(){return {t:Date.now(),html:d.html,depart:d.depart};});});})
+        .catch(function(){delete enVol[x];return null;});
+      return enVol[x];};
+    // Un envoi que le navigateur termine même si la page vient de se fermer
+    window.__envoyerEnPartant=function(f,a){try{fetch(LIEN,{method:'POST',keepalive:true,credentials:'omit',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({f:f,a:a})}).catch(function(){});}catch(e){}};
+    // Le collègue a-t-il commencé à se servir de l'écran ? Alors on ne le remplace jamais sous ses yeux.
+    window.__ctTouche=false;
+    ['pointerdown','keydown'].forEach(function(t){window.addEventListener(t,function(){window.__ctTouche=true;},true);});
+  }
+  // Sur l'accueil : la saisie est demandée d'avance ; les autres écrans dès que la souris (ou le doigt) arrive sur leur tuile
+  function prechargerDepuisAccueil(){
+    function go(){setTimeout(function(){if(window.__ctPrecharger)window.__ctPrecharger('saisie');},150);
+      document.querySelectorAll('.tuile[data-p]').forEach(function(a){var f=function(){if(window.__ctPrecharger)window.__ctPrecharger(a.dataset.p);};
+        a.addEventListener('pointerenter',f);a.addEventListener('touchstart',f,{passive:true});a.addEventListener('focus',f);});}
+    if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',go);else go();
   }
 
   var cadre=document.getElementById('cadre');
@@ -90,18 +121,32 @@ body{margin:0;min-height:100vh;font:15px/1.5 "Segoe UI",system-ui,Arial,sans-ser
   // MODE_WEB, URL_APPLI et DEMARRAGE sont posés à la fin de l'écran (l'ancien lien les ajoutait au même endroit).
   function ecrire(html,depart){
     var tete=(/name=["']viewport["']/i.test(html)?'':'<meta name="viewport" content="width=device-width, initial-scale=1">')
-      +'<script>('+poserGoogle.toString()+')('+JSON.stringify(LIEN_SCRIPT)+','+ATTENTE_APPEL+');<\/script>';
-    var fin='<script>window.MODE_WEB=true;window.URL_APPLI='+JSON.stringify(BASE)+';window.DEMARRAGE='+JSON.stringify(depart).replace(/</g,'\\u003c')+';<\/script>';
+      +'<script>('+poserGoogle.toString()+')('+JSON.stringify(LIEN_SCRIPT)+','+ATTENTE_APPEL+','+JSON.stringify(BASE)+','+FRAIS+');<\/script>';
+    var fin='<script>window.MODE_WEB=true;window.URL_APPLI='+JSON.stringify(BASE)+';window.DEMARRAGE='+JSON.stringify(depart).replace(/</g,'\\u003c')+';<\/script>'
+      +(p==='accueil'?'<script>('+prechargerDepuisAccueil.toString()+')();<\/script>':'');
     var h=/<head(\s[^>]*)?>/i.exec(html);
     html=h?html.slice(0,h.index+h[0].length)+tete+html.slice(h.index+h[0].length):tete+html;
     document.open();document.write(html+fin);document.close();
     document.title='Compétences transversales';
   }
-  var demarre=false;
+  // Ce qui compte pour savoir si l'écran gardé est encore le bon : son fichier, la liste des classes, les matières
+  function empreinte(d){var x=d&&d.depart||{};return (d&&d.html||'')+'|'+JSON.stringify([x.config,x.onglets,x.tableau,x.lien]);}
+  // L'écran gardé est affiché ; Google est interrogé en coulisse. S'il a changé et que le collègue n'a encore rien touché,
+  // la page se recharge sur le nouvel écran (aussitôt, depuis la mémoire) ; sinon le nouveau servira à la visite suivante.
+  function verifier(m){
+    window.__appelerScript({f:'page',p:p},ATTENTE_PAGE).then(function(d){
+      window.__ctGarderEcran(p,d).then(function(){if(empreinte(d)!==empreinte(m)&&!window.__ctTouche)location.reload();});
+    },function(){});   // Google ne répond pas : l'écran affiché reste, ses propres appels diront ce qui se passe
+  }
+  var pose=false;
   function charger(){
     attente();
-    if(!demarre){demarre=true;poserGoogle(LIEN_SCRIPT,ATTENTE_APPEL);}
-    window.__appelerScript({f:'page',p:p},ATTENTE_PAGE).then(function(d){ecrire(d.html,d.depart);},echec);
+    if(!pose){pose=true;poserGoogle(LIEN_SCRIPT,ATTENTE_APPEL,BASE,FRAIS);}
+    if(p==='accueil')window.__ctPrecharger('saisie');   // en même temps que l'accueil : prête avant le clic
+    window.__ctLireEcran(p).then(function(m){
+      if(m&&m.html){ecrire(m.html,m.depart);if(Date.now()-m.t>=FRAIS)verifier(m);return;}
+      window.__appelerScript({f:'page',p:p},ATTENTE_PAGE).then(function(d){window.__ctGarderEcran(p,d);ecrire(d.html,d.depart);},echec);
+    });
   }
   charger();
 })();
