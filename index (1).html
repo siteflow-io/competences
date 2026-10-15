@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Compétences transversales</title>
+<style>
+*{box-sizing:border-box;}
+body{margin:0;min-height:100vh;font:15px/1.5 "Segoe UI",system-ui,Arial,sans-serif;color:#1f2a36;background:#f3f5f8;display:flex;justify-content:center;align-items:flex-start;}
+.cadre{width:100%;max-width:620px;padding:70px 20px;text-align:center;}
+.rond{width:42px;height:42px;margin:0 auto 16px;border:5px solid #dfe6ee;border-top-color:#0070C0;border-radius:50%;animation:t .9s linear infinite;}
+@keyframes t{to{transform:rotate(360deg);}}
+.attente{color:#667085;}
+.echec{background:#fff;border:1px solid #e3e8ef;border-left:5px solid #c0392b;border-radius:12px;padding:24px 22px;text-align:left;}
+.echec h1{font-size:20px;margin:0 0 8px;color:#8e1b12;}
+.echec p{margin:0 0 10px;}
+.echec .detail{font-size:13px;color:#7a8594;word-break:break-word;}
+.echec button{margin-top:8px;padding:10px 18px;border:1px solid #0070C0;border-radius:8px;background:#fff;color:#0070C0;font:600 15px "Segoe UI",system-ui,Arial,sans-serif;cursor:pointer;}
+.echec button:hover{background:#eef6fc;}
+</style>
+</head>
+<body>
+<div class="cadre" id="cadre"><div class="rond"></div><p class="attente">Chargement…</p></div>
+<script>
+// Page d'entrée du lien de saisie. Elle demande l'écran voulu (?p=saisie…) au script du tableau, exactement le fichier que
+// l'ancien lien affichait, avec ses données de départ, puis l'affiche à sa place. Les demandes partent en texte simple et
+// sans aucun cookie ni compte Google : Google les traite comme un visiteur sans compte, et le script s'exécute en tant que
+// propriétaire du tableau. C'est ce qui permet au lien de s'ouvrir quel que soit le compte Google ouvert dans le navigateur.
+(function(){
+  var LIEN_SCRIPT='https://script.google.com/macros/s/AKfycbwZmEVwnVjd1URCvz-2GZFlGnCOpGazM5sKmTQY589KPgruTLg7ZXgu4iM4WlpgMYsbtw/exec';
+  var ATTENTE_PAGE=30000;     // l'écran : 30 s au plus, sinon on le dit
+  var ATTENTE_APPEL=420000;   // un appel : Google arrête lui-même un script au bout de 6 minutes
+  var BASE=location.origin+location.pathname;
+  var p='accueil';try{p=new URLSearchParams(location.search).get('p')||'accueil';}catch(e){}
+
+  // Ce que ce navigateur gardait pour l'ancien lien (dernière saisie, valeurs pas encore envoyées…) arrive dans l'adresse :
+  // on le range ici, sans écraser ce qui serait déjà rangé, puis on l'enlève de l'adresse.
+  if(location.hash.indexOf('#ct=')===0){
+    try{var m=JSON.parse(decodeURIComponent(location.hash.slice(4)));
+      Object.keys(m).forEach(function(k){if(k.indexOf('ct_')===0&&typeof m[k]==='string'&&localStorage.getItem(k)===null)localStorage.setItem(k,m[k]);});}catch(e){}
+    try{history.replaceState(null,'',location.pathname+location.search);}catch(e){}
+  }
+
+  // Remplace google.script.run, google.script.host et google.script.url dans l'écran affiché : même façon d'écrire,
+  // mêmes réponses, mêmes erreurs (leur texte est celui que donne le script). Cette fonction est recopiée dans l'écran.
+  function poserGoogle(LIEN,ATTENTE){
+    function appeler(corps,delai){return new Promise(function(ok,ko){
+      var fini=false,ctrl=window.AbortController?new AbortController():null;
+      var minuterie=setTimeout(function(){if(fini)return;fini=true;if(ctrl)ctrl.abort();ko(new Error('timed out : Google ne répond pas.'));},delai);
+      fetch(LIEN,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify(corps),credentials:'omit',redirect:'follow',cache:'no-store',signal:ctrl?ctrl.signal:undefined})
+        .then(function(r){if(!r.ok)throw new Error('server error '+r.status+(r.status===429?' : too many requests':''));return r.text();})
+        .then(function(t){if(fini)return;var d=null;try{d=JSON.parse(t);}catch(e){}
+          fini=true;clearTimeout(minuterie);
+          if(!d)ko(new Error('Google a répondu, mais pas avec les données attendues.'));else if(d.ok)ok(d);else ko(new Error(d.e||'Demande refusée.'));})
+        .catch(function(e){if(fini)return;fini=true;clearTimeout(minuterie);ko(e&&e.name==='TypeError'?new Error('NetworkError : '+e.message):e);});
+    });}
+    function run(){var ok=null,ko=null,uo;var api=new Proxy({},{get:function(t,k){
+      if(typeof k!=='string'||k==='then')return undefined;
+      if(k==='withSuccessHandler')return function(f){ok=f;return api;};
+      if(k==='withFailureHandler')return function(f){ko=f;return api;};
+      if(k==='withUserObject')return function(o){uo=o;return api;};
+      return function(){var a=Array.prototype.slice.call(arguments);
+        appeler({f:k,a:a},ATTENTE).then(function(d){if(ok)ok(d.r,uo);},function(e){if(ko)ko(e,uo);else if(window.console)console.error(e);});};}});
+      return api;}
+    function lieu(){var q={},qs={};try{new URLSearchParams(location.search).forEach(function(v,k){if(!(k in q))q[k]=v;(qs[k]=qs[k]||[]).push(v);});}catch(e){}
+      return {hash:location.hash.replace(/^#/,''),parameter:q,parameters:qs};}
+    window.__appelerScript=appeler;
+    window.google={script:{get run(){return run();},
+      host:{close:function(){},setHeight:function(){},setWidth:function(){},editor:{focus:function(){}},origin:location.origin},
+      url:{getLocation:function(cb){cb(lieu());}},
+      history:{push:function(){},replace:function(){},setChangeHandler:function(){}}}};
+  }
+
+  var cadre=document.getElementById('cadre');
+  function echapper(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;');}
+  function attente(){cadre.innerHTML='<div class="rond"></div><p class="attente">Chargement…</p>';}
+  function echec(e){
+    var m=String(e&&e.message||e||'');
+    var raison=!navigator.onLine?'La connexion internet est coupée.'
+      :/timed out/.test(m)?'Google ne répond pas pour l\'instant.'
+      :/NetworkError/.test(m)?'Cet ordinateur n\'arrive pas à joindre Google pour l\'instant.'
+      :'Google n\'a pas pu ouvrir la page.';
+    cadre.innerHTML='<div class="echec" role="alert"><h1>Impossible d\'ouvrir la page pour l\'instant</h1>'
+      +'<p>'+raison+' Rien n\'a été effacé.</p>'
+      +'<p class="detail">Message, à montrer au référent : « '+echapper(m.slice(0,300))+' »</p>'
+      +'<button id="reessayer" title="Redemande la page à Google (quelques secondes). Rien n\'est écrit.">↻ Réessayer</button></div>';
+    document.getElementById('reessayer').onclick=charger;
+  }
+  // L'écran est écrit à la place de cette page. Comme sur l'ancien lien : google.script.* existe dès le début,
+  // MODE_WEB, URL_APPLI et DEMARRAGE sont posés à la fin de l'écran (l'ancien lien les ajoutait au même endroit).
+  function ecrire(html,depart){
+    var tete=(/name=["']viewport["']/i.test(html)?'':'<meta name="viewport" content="width=device-width, initial-scale=1">')
+      +'<script>('+poserGoogle.toString()+')('+JSON.stringify(LIEN_SCRIPT)+','+ATTENTE_APPEL+');<\/script>';
+    var fin='<script>window.MODE_WEB=true;window.URL_APPLI='+JSON.stringify(BASE)+';window.DEMARRAGE='+JSON.stringify(depart).replace(/</g,'\\u003c')+';<\/script>';
+    var h=/<head(\s[^>]*)?>/i.exec(html);
+    html=h?html.slice(0,h.index+h[0].length)+tete+html.slice(h.index+h[0].length):tete+html;
+    document.open();document.write(html+fin);document.close();
+    document.title='Compétences transversales';
+  }
+  var demarre=false;
+  function charger(){
+    attente();
+    if(!demarre){demarre=true;poserGoogle(LIEN_SCRIPT,ATTENTE_APPEL);}
+    window.__appelerScript({f:'page',p:p},ATTENTE_PAGE).then(function(d){ecrire(d.html,d.depart);},echec);
+  }
+  charger();
+})();
+</script>
+</body>
+</html>
